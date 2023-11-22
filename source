@@ -1,0 +1,82 @@
+#include <Arduino.h>
+#include <SPI.h>
+#include <EthernetENC.h>
+#include "one_wire.h"
+
+
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };// Dirección MAC para el ENC28J60 
+IPAddress ip(192, 168, 0, 177); // Dirección IP para el ENC28J60
+
+EthernetServer server(80); // Servidor web en el puerto 80
+const int ledPin = 2; // Pin del LED
+
+One_wire one_wire(14); // GPIO 14 para el bus One-Wire
+rom_address_t address1{};
+rom_address_t address2{};
+
+bool ledState = LOW; // Estado del LED al empezar
+
+void setup() {
+ 
+  Serial.begin(9600); // Inicializar la comunicación serial a 9600 baudios
+
+  pinMode(ledPin, OUTPUT); // Inicializar el pin del LED como salida
+ 
+  Ethernet.begin(mac, ip); // Inicializar la conexión Ethernet
+  
+  server.begin(); // Inicializar el servidor web
+
+  one_wire.init(); // Inicializar el bus One-Wire
+  
+  if (one_wire.find_and_count_devices_on_bus() >= 2) { // direccion sensores One-Wire
+    address1 = One_wire::get_address(0);
+    address2 = One_wire::get_address(1);
+  } else {
+    Serial.println("No se encontraron sensores");
+  }
+}
+
+void loop() {
+  EthernetClient client = server.available(); // obtener respuesta del cliente
+  if (client){
+    while (client.connected()) { //solicitud HTTP
+      if (client.available()) {
+        String request = client.readStringUntil('\r'); // Leer la solicitud HTTP
+        if (request.indexOf("GET /") != -1) {  // solicitud tipo "GET /", muestra las temperaturas y botones
+          
+          one_wire.convert_temperature(address1, true, true);// Realizar la conversión de temperaturas
+          one_wire.convert_temperature(address2, true, true);
+          float temperature1 = one_wire.temperature(address1);
+          float temperature2 = one_wire.temperature(address2);
+
+          client.println("HTTP/1.1 200 OK");  // envia las temperaturas y configura botones de led en la página web
+          client.println("Content-Type: text/html");
+          client.println();
+          client.println("<html><body>");
+          client.println("<h1>Temperaturas de los Sensores</h1>");
+          client.print("<p>Temperatura Sensor 1: ");
+          client.print(temperature1);
+          client.println(" &deg;C</p>");
+          client.print("<p>Temperatura Sensor 2: ");
+          client.print(temperature2);
+          client.println(" &deg;C</p>");
+          client.println("<form action='/' method='get'>");
+          client.println("<input type='submit' name='led' value='Encender LED'>");
+          client.println("<input type='submit' name='led' value='Apagar LED'>");
+          client.println("</form>");
+          client.println("</body></html>");
+        }
+
+        if (request.indexOf("GET /?led=Encender") != -1) {  // Si se presiona un botón cambia el estado del LED
+          ledState = HIGH;
+          digitalWrite(ledPin, ledState);
+        } 
+        if (request.indexOf("GET /?led=Apagar") != -1) {
+          ledState = LOW;
+          digitalWrite(ledPin, ledState);
+        }
+        client.stop();   // Romper la conexión
+      }
+    }
+  }
+}
